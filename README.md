@@ -1,6 +1,7 @@
 # ChatAppTutorial
 
 I have deleted google-services.json. Add yours
+<br><b> Change Authorization:key with your key from firebase project</b>
 
 <br>Implementation Guide 
 <br>1 - Project
