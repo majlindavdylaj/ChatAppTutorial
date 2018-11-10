@@ -196,6 +196,11 @@ public class MessageActivity extends AppCompatActivity {
 
             }
         });
+        
+        final DatabaseReference chatRefReceiver = FirebaseDatabase.getInstance().getReference("Chatlist")
+                .child(userid)
+                .child(fuser.getUid());
+        chatRefReceiver.child("id").setValue(fuser.getUid());
 
         final String msg = message;
 
