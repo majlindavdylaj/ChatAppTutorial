@@ -5,8 +5,8 @@ import android.content.ContentResolver;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
-import android.support.annotation.NonNull;
-import android.support.v4.app.Fragment;
+import androidx.annotation.NonNull;
+import androidx.fragment.app.Fragment;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -14,10 +14,11 @@ import android.webkit.MimeTypeMap;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.Nullable;
+
 import com.bumptech.glide.Glide;
 import com.google.android.gms.tasks.Continuation;
 import com.google.android.gms.tasks.OnCompleteListener;
-import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.Task;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
@@ -32,6 +33,8 @@ import com.google.firebase.storage.StorageTask;
 import com.google.firebase.storage.UploadTask;
 import com.koddev.chatapp.Model.User;
 import com.koddev.chatapp.R;
+import com.theartofdev.edmodo.cropper.CropImage;
+import com.theartofdev.edmodo.cropper.CropImageView;
 
 import java.util.HashMap;
 
@@ -48,10 +51,11 @@ public class ProfileFragment extends Fragment {
     DatabaseReference reference;
     FirebaseUser fuser;
 
+    private ProgressDialog loadingBar;
+
     StorageReference storageReference;
-    private static final int IMAGE_REQUEST = 1;
-    private Uri imageUri;
-    private StorageTask uploadTask;
+    private static final int GALLERY_PICK = 1;
+
 
 
     @Override
@@ -63,7 +67,7 @@ public class ProfileFragment extends Fragment {
         image_profile = view.findViewById(R.id.profile_image);
         username = view.findViewById(R.id.username);
 
-        storageReference = FirebaseStorage.getInstance().getReference("uploads");
+        storageReference = FirebaseStorage.getInstance().getReference("/ProfileImages/"+fuser.getUid());
 
         fuser = FirebaseAuth.getInstance().getCurrentUser();
         reference = FirebaseDatabase.getInstance().getReference("Users").child(fuser.getUid());
@@ -93,6 +97,8 @@ public class ProfileFragment extends Fragment {
             }
         });
 
+        loadingBar = new ProgressDialog(getContext());
+
         return view;
     }
 
@@ -100,77 +106,76 @@ public class ProfileFragment extends Fragment {
         Intent intent = new Intent();
         intent.setType("image/*");
         intent.setAction(Intent.ACTION_GET_CONTENT);
-        startActivityForResult(intent, IMAGE_REQUEST);
+        startActivityForResult(intent, GALLERY_PICK);
+    }
+
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+
+        if (requestCode == GALLERY_PICK && resultCode == RESULT_OK && data != null) {
+            Uri imageUri = data.getData();
+            CropImage.activity(imageUri)
+                    .setGuidelines(CropImageView.Guidelines.ON)
+                    .setAspectRatio(1, 1)
+                    .start(getActivity());
+
+        }
+
+        if (requestCode == CropImage.CROP_IMAGE_ACTIVITY_REQUEST_CODE) {
+
+            CropImage.ActivityResult result = CropImage.getActivityResult(data);
+
+            if (resultCode == RESULT_OK) {
+                loadingBar.setTitle("Profile Image");
+                loadingBar.setMessage("Please wait, while we update your profile picture...");
+                loadingBar.show();
+                loadingBar.setCanceledOnTouchOutside(false);
+                assert result != null;
+                Uri resultUri = result.getUri();
+
+                StorageReference filepath = storageReference.child(System.currentTimeMillis()
+                        + "." + getFileExtension(resultUri));
+
+
+                StorageTask uploadTask = filepath.putFile(resultUri);
+                uploadTask.continueWithTask((Continuation<UploadTask.TaskSnapshot, Task<Uri>>) task -> {
+                    if (!task.isSuccessful()) {
+                        throw task.getException();
+                    }
+                    return filepath.getDownloadUrl();
+                }).addOnCompleteListener(new OnCompleteListener<Uri>() {
+                    @Override
+                    public void onComplete(@androidx.annotation.NonNull Task<Uri> task) {
+                        if (task.isSuccessful()) {
+                            Toast.makeText(getContext(), "Image has been stored in our servers", Toast.LENGTH_SHORT).show();
+
+                            Uri downloadUri = task.getResult();
+                            assert downloadUri != null;
+                            String mUri = downloadUri.toString();
+
+
+                            reference = FirebaseDatabase.getInstance().getReference("Users").child(fuser.getUid());
+                            HashMap<String, Object> map = new HashMap<>();
+                            map.put("imageURL", mUri);
+                            reference.updateChildren(map);
+
+                            loadingBar.dismiss();
+
+                        }
+                    }
+                });
+            } else {
+                Toast.makeText(getContext(), "Profile Picture update request has cancelled", Toast.LENGTH_SHORT).show();
+                loadingBar.dismiss();
+            }
+        }
     }
 
     private String getFileExtension(Uri uri){
         ContentResolver contentResolver = getContext().getContentResolver();
         MimeTypeMap mimeTypeMap = MimeTypeMap.getSingleton();
         return mimeTypeMap.getExtensionFromMimeType(contentResolver.getType(uri));
-    }
-
-    private void uploadImage(){
-        final ProgressDialog pd = new ProgressDialog(getContext());
-        pd.setMessage("Uploading");
-        pd.show();
-
-        if (imageUri != null){
-            final  StorageReference fileReference = storageReference.child(System.currentTimeMillis()
-                    +"."+getFileExtension(imageUri));
-
-            uploadTask = fileReference.putFile(imageUri);
-            uploadTask.continueWithTask(new Continuation<UploadTask.TaskSnapshot, Task<Uri>>() {
-                @Override
-                public Task<Uri> then(@NonNull Task<UploadTask.TaskSnapshot> task) throws Exception {
-                    if (!task.isSuccessful()){
-                        throw  task.getException();
-                    }
-
-                    return  fileReference.getDownloadUrl();
-                }
-            }).addOnCompleteListener(new OnCompleteListener<Uri>() {
-                @Override
-                public void onComplete(@NonNull Task<Uri> task) {
-                    if (task.isSuccessful()){
-                        Uri downloadUri = task.getResult();
-                        String mUri = downloadUri.toString();
-
-                        reference = FirebaseDatabase.getInstance().getReference("Users").child(fuser.getUid());
-                        HashMap<String, Object> map = new HashMap<>();
-                        map.put("imageURL", ""+mUri);
-                        reference.updateChildren(map);
-
-                        pd.dismiss();
-                    } else {
-                        Toast.makeText(getContext(), "Failed!", Toast.LENGTH_SHORT).show();
-                        pd.dismiss();
-                    }
-                }
-            }).addOnFailureListener(new OnFailureListener() {
-                @Override
-                public void onFailure(@NonNull Exception e) {
-                    Toast.makeText(getContext(), e.getMessage(), Toast.LENGTH_SHORT).show();
-                    pd.dismiss();
-                }
-            });
-        } else {
-            Toast.makeText(getContext(), "No image selected", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-
-        if (requestCode == IMAGE_REQUEST && resultCode == RESULT_OK
-                && data != null && data.getData() != null){
-            imageUri = data.getData();
-
-            if (uploadTask != null && uploadTask.isInProgress()){
-                Toast.makeText(getContext(), "Upload in preogress", Toast.LENGTH_SHORT).show();
-            } else {
-                uploadImage();
-            }
-        }
     }
 }
